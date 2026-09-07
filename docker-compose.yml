@@ -1,0 +1,51 @@
+name: matomo-infra
+
+services:
+  # Self-hosted Matomo analytics for vrlobby.cz.
+  # Components:
+  #   - matomo:  the analytics web UI (Apache+PHP), exposed for Coolify/Traefik -> analytics.vrlobby.cz
+  #   - mariadb: Matomo's database, bound ONLY to the private host bridge (RFC1918)
+  #              so recurring backup jobs can reach it, but it is NOT on the public IP.
+
+  matomo:
+    image: matomo:apache
+    restart: unless-stopped
+    expose:
+      - '80'
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MATOMO_DATABASE_HOST: db
+      MATOMO_DATABASE_ADAPTER: mariadb
+      MATOMO_DATABASE_TABLES_PREFIX: matomo_
+      MATOMO_DATABASE_USERNAME: ${MATOMO_DB_USER}
+      MATOMO_DATABASE_PASSWORD: ${MATOMO_DB_PASSWORD}
+      MATOMO_DATABASE_DBNAME: ${MATOMO_DB_NAME}
+    volumes:
+      - matomo_data:/var/www/html
+
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    # Private bridge only — do NOT expose on 0.0.0.0 (public IP leak risk).
+    # 10.0.8.1 is the host's private bridge used by the other Lobby containers;
+    # same host, so the backup job can reach MariaDB here without exposing it publicly.
+    ports:
+      - '10.0.8.1:3306:3306'
+    environment:
+      MARIADB_DATABASE: ${MATOMO_DB_NAME}
+      MARIADB_USER: ${MATOMO_DB_USER}
+      MARIADB_PASSWORD: ${MATOMO_DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MATOMO_DB_ROOT_PASSWORD}
+    volumes:
+      - matomo_db:/var/lib/mysql
+    healthcheck:
+      test: ['CMD-SHELL', "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  matomo_data:
+  matomo_db:
